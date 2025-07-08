@@ -1,0 +1,179 @@
+#installing DESeq for the first time via BiocManager!!
+BiocManager::install("DESeq2")
+library(DESeq2)
+all(rownames(coldata) == colnames(counts_matrix)[, -1])
+colnames(counts_matrix)
+rownames(coldata)
+all(colnames(counts_matrix)[-1] == 
+      rownames(coldata))
+
+#data analysis via DESeq2
+dds <- DESeqDataSetFromMatrix(
+  countData = counts_matrix[, -1], 
+  colData = coldata,
+  design = ~ condition
+)
+dds <- DESeq(dds)
+res <- results(dds, contrast = c("condition", "treated", "control"))
+res_filtered <- res[which(res$padj < 0.001), ]
+
+vsd <- vst(dds, blind = TRUE)
+
+##generating PCA plots to check...
+
+#whether control and treated samples show distinct expression patterns 
+plotPCA(vsd, intgroup = "condition")
+
+#whether gene expression changes with time after treatment
+plotPCA(vsd, intgroup = "timepoint_map")
+
+#whether gene expression differ across conditions and timepoints 
+plotPCA(vsd, intgroup = c("condition", "timepoint_map"))
+library(ggplot2)
+res_df <- as.data.frame(res_filtered)
+res_df <- na.omit(res_df)
+
+#now moving onto the elephant in the room..volcano plot
+res_df$significance <- "Non-significant expression"
+res_df$significance[abs(res_df$log2FoldChange) > 1] <- "Significant expression"
+
+#plotting the volcano plot using the master package of data visualization ggplot2
+ggplot(res_df, aes(x = log2FoldChange, 
+                   y = - log10(padj))) + 
+  geom_point(aes(color = significance), alpha = 0.7, size = 1.8) + 
+  scale_color_manual(values = c("blue", "red")) + 
+  theme_minimal() + 
+  xlim(-3, 3) + 
+  labs(title = "Volcano plot", 
+       x = "log2 FC", 
+       y = "-log10 padj") + 
+  theme(plot.title = element_text(hjust = 0.5), legend.title = element_blank())
+
+#you know what, let's make it better.
+#till now our dataset had RIKEN IDs. Changing them back to ENSEMBL IDs for clarification
+BiocManager::install("biomaRt")
+library(biomaRt)
+ensembl <- useMart("ensembl", 
+                   dataset = "mmusculus_gene_ensembl")
+df_rikenID <- read.csv("cerebellum_counts_matrix.csv", 
+                       row.names = 1)
+counts_matrix <- as.matrix(df_rikenID)
+Gene_ids <- rownames(counts_matrix)
+mapping <- getBM(
+  attributes = c("external_gene_name", "ensembl_gene_id", "mgi_symbol"), 
+  filters = "external_gene_name", 
+  values = Gene_ids, 
+  mart = ensembl
+)
+
+library(dplyr)
+library(tibble)
+df_annot <- as.data.frame(counts_matrix) %>% rownames_to_column("Gene")
+df_annot <- df_annot %>% left_join(mapping, by = c("Gene" = "external_gene_name"))
+df_annot$Gene <- ifelse(!is.na(df_annot$mgi_symbol) & 
+                          df_annot$mgi_symbol != "", 
+                        df_annot$mgi_symbol, 
+                        ifelse(! is.na(df_annot$ensembl_gene_id), 
+                               df_annot$ensembl_gene_id, 
+                               df_annot$Gene))
+df_annot <- df_annot %>% filter(! is.na(Gene))
+
+df_annot$Gene <- make.unique(df_annot$Gene)
+final_counts_matrix <- df_annot %>% select(-ensembl_gene_id, -mgi_symbol) %>% 
+  column_to_rownames("Gene")
+
+dds01 <- DESeqDataSetFromMatrix(countData = final_counts_matrix, 
+                                colData = coldata, 
+                                design = ~ condition)
+colnames(final_counts_matrix)
+rownames(coldata)
+colnames(final_counts_matrix) <- sub("*._(\\d+C).*", "\\1", 
+                                     colnames(final_counts_matrix))
+colnames(final_counts_matrix)
+all(colnames(final_counts_matrix) == rownames(coldata))
+final_counts_matrix <- final_counts_matrix[, rownames(coldata)]
+setdiff(rownames(coldata), colnames(final_counts_matrix))
+head(colnames(final_counts_matrix), 4)
+library(stringr)
+colnames(final_counts_matrix) <- str_extract(colnames(final_counts_matrix), 
+                                             "_[0-9]+C_") %>% str_replace_all("_", "")
+print(colnames(final_counts_matrix))
+print(rownames(coldata))
+def_rikenID <- read.csv("cerebellum_counts_matrix.csv", 
+                        row.names = 1, 
+                        check.names = F)
+counts_matrix <- as.matrix(df_rikenID)
+sample_ids <- sapply(strsplit(colnames(counts_matrix), "_"), `[`, 2)
+head(sample_ids)
+colnames(counts_matrix) <- sample_ids
+
+## after a thousand error messages and repeated trials, we made it
+head(colnames(counts_matrix))
+head(rownames(coldata))
+
+#let's plot another volcano plot....
+dds02 <- DESeqDataSetFromMatrix(
+  countData = counts_matrix, 
+  colData = coldata, 
+  design = ~ condition
+)
+
+#...but this time, with names of the significantly upregulated genes mentioned in the plot
+dds02 <- DESeq(dds02)
+res01 <- results(dds02)
+library(tibble)
+library(dplyr)
+library(ggplot2)
+res_df01 <- as.data.frame(res01) %>% 
+  tibble::rownames_to_column("gene") %>% 
+  filter(!is.na(padj)) %>% 
+  mutate(sig = padj < 0.001 & 
+           abs(log2FoldChange) > 1)
+top_genes <- res_df01 %>% 
+  filter(sig) %>% 
+  arrange(padj) %>% 
+  slice(1:10)
+
+#here we go..
+res_df01$significance <- "Non-significant expression"
+res_df01$significance[abs(res_df01$log2FoldChange) > 1] <- "Significant expression"
+
+ggplot(res_df, aes(x = log2FoldChange, 
+                   y = - log10(padj))) + 
+  geom_point(aes(color = significance), alpha = 0.7, size = 1.2) + 
+  scale_color_manual(values = c("blue", "red")) + 
+  geom_text(data = top_genes, aes(label = gene), vjust = -1, size = 3) + 
+  theme_minimal() + 
+  xlim(-3, 3) + 
+  labs(title = "Volcano plot of differentially expressed genes in cerebellum", 
+       x = "log2 FC", 
+       y = "-log10 padj") + 
+  theme(plot.title = element_text(hjust = 0.5), legend.title = element_blank())
+
+#tadaaa! now saving the dataframe into csv format
+write.csv(res_df01, "Differentially_expressed_genes_cerebellum.csv", row.names = F)
+
+#why stop with volcano plot? let's do some Gene ontology!
+"clusterProfiler" %in% rownames(installed.packages())
+"pathview" %in% rownames(installed.packages())
+
+#oops! i didn't have pathview package installed
+BiocManager::install("pathview")
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(pathview)
+library(dplyr)
+sig_genes <- res_df01 %>% filter(sig) %>% pull(gene)
+
+gene_entrez <- bitr(sig_genes, 
+                    fromType = "SYMBOL", 
+                    toType = "ENTREZID", 
+                    OrgDb = org.Mm.eg.db)
+head(gene_entrez)
+#here we GO! 
+ego <- enrichGO(gene = gene_entrez$ENTREZID, 
+                OrgDb = org.Mm.eg.db, 
+                keyType = "ENTREZID", 
+                ont = "BP", 
+                pvalueCutoff = 0.05)
+dotplot(ego)
