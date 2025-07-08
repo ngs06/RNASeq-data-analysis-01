@@ -26,7 +26,7 @@ Goal : To study tissue-specific transcriptomic changes in the CNS due to Influen
    - Volcano plot suign ggplot2()
 
 4. Gene annotation
-   - Conversion of ENSEMBL gene IDs to Gene symbols ad Entrez ID using biomaRT + org.MM.eg.db
+   - Conversion of ENSEMBL gene IDs to Gene symbols ad Entrez ID using biomaRT + org.Mm.eg.db
   
 5. GO analysis
    - Usage of clusterProfiler to run enrichGO() for biological processes
