@@ -1,0 +1,179 @@
+##A full pipeline of data sorting, data manipulation, and analysis
+
+#First we load the raw file (*.tar) and convert it into editable, comma delimited format (*.csv)
+# we also remove any header having # that interferes with computation
+#furthermore we load the converted files into a different folder as an output 
+
+files <- list.files("GSE96870_RAW", pattern = ".txt.gz$", full.names = TRUE)
+input_folder <- "GSE96870_RAW"
+output_folder <- "Converted reads"
+convert.to.csv <- function(file_path) {
+  df <- read.delim(gzfile(file_path),
+                   comment.char = "#", 
+                   header = T)
+  base_name <- gsub("_featCounts\\.txt\\.gz", "", 
+                    basename(file_path))
+  output_folder <- file.path("Converted reads", paste0(base_name, ".csv"))
+  write.csv(df, output_folder, row.names = F)
+}
+
+# lapply() basically applies a function to each element of a list and returns the result as a list
+#by using it, we convert all the files in the raw format and convert them into csv
+
+lapply(files, convert.to.csv)
+list.files("Converted reads", pattern = "\\.csv$")
+csv_files <- list.files("Converted reads", pattern = "\\.csv$", full.names = TRUE)
+
+#passing on the files into a different object 
+cerebellum_files <- csv_files[grep("_\\d+C_", csv_files)]
+cerebellum_files
+
+# we're extracting the gene id column and the corresponding column containing counts 
+#from all 22 files
+extract_counts <- function(file) { 
+  df <- read.csv(file) 
+  geneid <- df$Geneid
+  counts <- df[[ncol(df)]] 
+  sample_name <- gsub(".csv$", "", basename(file))
+  out <- data.frame(Geneid = geneid, counts)
+  colnames(out)[2] <- sample_name
+  return(out)
+}
+
+# we're applying the extract_counts function (which basically extracts the count and gene id columns
+# into a new data frame called count_list from cerebellum_files)
+
+count_list <- lapply(cerebellum_files, extract_counts)
+count_list
+
+#we merge all the gene id columns across all the files by using Reduce() function 
+
+counts_matrix <- Reduce(function(x, y) 
+  merge(x, y, by = "Geneid", all = TRUE), 
+  lapply(cerebellum_files, extract_counts))
+#checking the number of rows and columns in the data frame
+
+dim(counts_matrix)
+head(counts_matrix)
+
+# exporting the whole data frame of counts_matrix into an actual human readable format
+
+write.csv(counts_matrix, "cerebellum_counts_matrix.csv", row.names = F)
+
+cerebellum.reads <- "cerebellum_counts_matrix.csv"
+
+#checking the column names from the second offset i.e. without the gene id column
+sample_names <- colnames(counts_matrix)[-1]
+print(sample_names)
+
+#changing the column names and applying it in the right order
+changed.colnames <- c("10C", "11C", "12C", "13C", "14C", "17C", "1C", "20C", "21C", "22C", "25C", "26C", "27C", "28C", "29C", "2C", "30C", "3C", "4C", "5C", "6C", "9C")
+colnames(counts_matrix)[-1] <- changed.colnames
+
+#making a new data frame called coldata for DESeq analysis and assigning the required column into it
+timepoint_map <- c(
+  "DAY8", 
+  "DAY4", 
+  "DAY4", 
+  "DAY0", 
+  "DAY0", 
+  "DAY4", 
+  "DAY8", 
+  "DAY4", 
+  "DAY0", 
+  "DAY0", 
+  "DAY8", 
+  "DAY8", 
+  "DAY4", 
+  "DAY4", 
+  "DAY0", 
+  "DAY8", 
+  "DAY8", 
+  "DAY4", 
+  "DAY4", 
+  "DAY0", 
+  "DAY0", 
+  "DAY8"
+)
+coldata <- data.frame(
+  timepoint_map = factor(timepoint_map, 
+                         levels = c("DAY0", "DAY4", "DAY8")), 
+  condition = 
+    factor(condition, levels = c("control", "treated")) 
+)
+
+#assigning the colnames of sample_names data frame into the new data frame called coldata
+rownames(coldata) <- sample_names
+coldata
+condition <- c(
+  "treated", 
+  "control", 
+  "control", 
+  "treated", 
+  "treated", 
+  "treated", 
+  "treated", 
+  "control",
+  "treated", 
+  "treated", 
+  "treated", 
+  "treated", 
+  "control", 
+  "control", 
+  "treated", 
+  "treated", 
+  "treated", 
+  "control", 
+  "control", 
+  "treated", 
+  "treated", 
+  "treated"
+)
+
+#checking if we're on the right path by getting the number of rows in each column
+length(sample_names)
+length(timepoint_map)
+length(condition)
+
+#clears any empty row
+print(condition)
+any(is.na(condition))
+any(condition == "")
+
+coldata
+
+rownames(coldata) <- changed.colnames
+coldata
+
+#rownames of coldata data frame is going to be that of sample_name 
+coldata$sample_name <- rownames(coldata)
+
+#something went wrong here 
+coldata <- cbind(sample_name = rownames(coldata), coldata)
+coldata
+coldata <- coldata[, c("sample_name", "timepoint", "condition")]
+
+#fixing it with dplyr as always
+library(dplyr)
+#keeping only the selected columns and rest removed
+coldata <- coldata %>% 
+  select(sample_name, timepoint_map, condition) %>% 
+  distinct()
+
+#again something went wrong so had to fix it
+coldata <- coldata[, 2: (ncol(coldata)-1)]
+coldata
+colnames(coldata)
+#fixing with one of the tidyverse packages tibble
+installed.packages("tibble")
+library(tibble)
+coldata <- tibble::rownames_to_column(coldata, var = "sample_name")
+colnames(coldata)
+
+#was trying to match the dimensions of counts_matrix and coldata
+#otherwise DESeq wouldn't have run
+
+coldata <- coldata[match(colnames(counts_matrix)[-1], coldata$sample_name), ]
+all(rownames(coldata) == colnames(counts_matrix)[-1])
+dim(counts_matrix)
+dim(coldata)
